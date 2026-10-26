@@ -4,7 +4,7 @@
 )]
 
 use super::{
-    artwork::{artwork_from_provider_url, is_allowed_artwork_url},
+    artwork::{artwork_from_provider_url, is_allowed_artwork_url, is_placeholder_artwork},
     auth::{AuthenticatedAccountContext, QQMusicAuthService},
     cache::{
         AccountCache, AccountEpoch, AccountLibraryProjection, CachedAccountPage,
@@ -2176,6 +2176,9 @@ impl QQMusicAccountService {
             if summary.title.trim().is_empty() {
                 summary.title = projected.title;
             }
+            if is_placeholder_artwork(&summary.artwork) {
+                summary.artwork = projected.artwork;
+            }
         } else if summary.id != playlist_id {
             tracing::warn!(
                 target: "qqmusic.playlist",
@@ -2796,6 +2799,9 @@ impl QQMusicAccountService {
                 }
                 if summary.description.trim().is_empty() {
                     summary.description = requested_summary.description.clone();
+                }
+                if is_placeholder_artwork(&summary.artwork) {
+                    summary.artwork = requested_summary.artwork.clone();
                 }
                 if summary.owner.display_name.is_empty() || summary.owner.display_name == "QQ Music"
                 {
@@ -5572,6 +5578,43 @@ mod tests {
         assert_eq!(recent.items.len(), 2);
         assert!(recent.items.iter().all(|item| item.song.is_favorite));
         assert_eq!(fixture.transport.call_count(), 5);
+    }
+
+    #[tokio::test]
+    async fn playlist_detail_inherits_listed_cover_when_tracks_omit_picurl() {
+        let requested = normalize_playlist_value(&json!({
+            "tid": "SANITIZED_PLAYLIST_OWNED",
+            "dirId": 3001,
+            "dirName": "Synthetic Owned Playlist",
+            "picUrl": "https://qpic.y.qq.com/synthetic-owned.png",
+            "ownership": "owned"
+        }))
+        .expect("owned summary");
+        assert_eq!(
+            requested.artwork.src,
+            "https://qpic.y.qq.com/synthetic-owned.png"
+        );
+        let mut detail: Value = serde_json::from_str(include_str!(
+            "../../tests/fixtures/qqmusic/account/playlist-owned.json"
+        ))
+        .expect("owned playlist fixture");
+        detail["req"]["data"]["dirinfo"]
+            .as_object_mut()
+            .expect("dirinfo")
+            .remove("picUrl");
+        let fixture = AccountServiceFixture::authenticated([TestReply::Body(
+            serde_json::to_vec(&detail).expect("fixture serializes"),
+        )])
+        .await;
+        let result = fixture
+            .service
+            .playlist_tracks(requested, None, 50)
+            .await
+            .expect("owned detail");
+        assert_eq!(
+            result.summary.artwork.src,
+            "https://qpic.y.qq.com/synthetic-owned.png"
+        );
     }
 
     #[tokio::test]

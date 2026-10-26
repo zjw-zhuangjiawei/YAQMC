@@ -25,6 +25,12 @@ pub(super) fn artwork_from_provider_url(
     )
 }
 
+/// The playlist-tracks endpoints omit `dirinfo.picurl` for own playlists, so their
+/// detail summaries normalize to the placeholder and must inherit the listed cover.
+pub(super) fn is_placeholder_artwork(artwork: &Artwork) -> bool {
+    artwork.src == FALLBACK_ARTWORK
+}
+
 fn map_artwork(
     source: Option<qqmusic_api::artwork::ArtworkSource>,
     title: &str,
