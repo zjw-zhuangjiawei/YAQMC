@@ -2036,7 +2036,7 @@ async function runEntityPlaylistMutation({
   return result;
 }
 
-const CREATE_PLAYLIST_KEY = 'playlist-create';
+export const CREATE_PLAYLIST_KEY = 'playlist-create';
 
 async function runCreatePlaylistMutation(
   provider: AccountMusicProvider,

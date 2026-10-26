@@ -1,9 +1,17 @@
-import { Play } from 'lucide-react';
-import type { ReactNode } from 'react';
+import { Play, Plus } from 'lucide-react';
+import { useContext, useState, type FormEvent, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
-import type { AccountListResource, LibraryResource } from '../application/account-runtime';
+import {
+  CREATE_PLAYLIST_KEY,
+  useAccountStore,
+  usePlaylistMutationState,
+  type AccountListResource,
+  type LibraryResource,
+} from '../application/account-runtime';
 import type { AppRoute } from '../application/navigation';
 import { usePlayerStore } from '../application/player-store';
+import { ProviderContext } from '../application/provider-context';
+import { isAccountMusicProvider } from '../providers/music-provider';
 import type {
   AccountPlaylistSummary,
   AccountSnapshot,
@@ -50,7 +58,28 @@ export function LibraryPage({
 }: LibraryPageProps) {
   const { t } = useTranslation('pages', { keyPrefix: 'library' });
   const { t: common } = useTranslation('common');
+  const { t: playlistT } = useTranslation('pages', { keyPrefix: 'playlist' });
   const playTracks = usePlayerStore((state) => state.playTracks);
+  const provider = useContext(ProviderContext);
+  const accountProvider = provider && isAccountMusicProvider(provider) ? provider : null;
+  const createPlaylist = useAccountStore((state) => state.createPlaylist);
+  const { pending: createPending, notice: createNotice } =
+    usePlaylistMutationState(CREATE_PLAYLIST_KEY);
+  const [creating, setCreating] = useState(false);
+  const [titleDraft, setTitleDraft] = useState('');
+  const normalizedTitle = titleDraft.trim();
+  const titleValid =
+    normalizedTitle.length > 0 &&
+    Array.from(normalizedTitle).length <= 80 &&
+    !/[\p{Cc}\p{Cf}]/u.test(normalizedTitle);
+  const canCreate = accountProvider !== null && snapshot.capabilities.playlistWrite;
+
+  const submitCreate = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!accountProvider || createPending || !titleValid) return;
+    const result = await createPlaylist(accountProvider, normalizedTitle);
+    if (result?.status === 'applied' || result?.status === 'reconciled') setCreating(false);
+  };
   const title = t(
     view === 'favorites'
       ? 'favoriteSongs'
@@ -225,7 +254,48 @@ export function LibraryPage({
               <section className="content-section content-section--last">
                 <div className="section-heading">
                   <h2>{t('myPlaylists')}</h2>
+                  {canCreate && !creating && (
+                    <button
+                      type="button"
+                      disabled={createPending}
+                      onClick={() => setCreating(true)}
+                    >
+                      <Plus size={15} /> {t('newPlaylist')}
+                    </button>
+                  )}
                 </div>
+                {creating && (
+                  <form
+                    className="account-playlist-mutation-form"
+                    onSubmit={(event) => void submitCreate(event)}
+                  >
+                    <label htmlFor="library-new-playlist-name">{t('playlistName')}</label>
+                    <div>
+                      <input
+                        id="library-new-playlist-name"
+                        value={titleDraft}
+                        disabled={createPending}
+                        maxLength={80}
+                        onChange={(event) => setTitleDraft(event.target.value)}
+                      />
+                      <button type="submit" disabled={createPending || !titleValid}>
+                        {t('createPlaylist')}
+                      </button>
+                      <button
+                        type="button"
+                        disabled={createPending}
+                        onClick={() => setCreating(false)}
+                      >
+                        {common('cancel')}
+                      </button>
+                    </div>
+                  </form>
+                )}
+                {createNotice && (
+                  <p className="account-playlist-mutation-notice" role="status">
+                    {playlistT(`mutation.${createNotice.operation}.${createNotice.outcome}`)}
+                  </p>
+                )}
                 <div className="account-playlist-grid">
                   {items.map((playlist) => (
                     <button

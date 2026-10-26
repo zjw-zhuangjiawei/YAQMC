@@ -1,14 +1,19 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import type { ComponentProps } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { resetAccountRuntimeForTest, useAccountStore } from '../application/account-runtime';
 import { initialPlayerState, usePlayerStore } from '../application/player-store';
+import { ProviderContext } from '../application/provider-context';
 import type {
   AccountPlaylistSummary,
   AccountSnapshot,
+  CreatePlaylistRequest,
+  PlaylistMutationResult,
   RemotePlayHistoryItem,
 } from '../domain/music';
 import i18n from '../i18n';
 import { allSongs, playlists } from '../providers/fake/fixtures';
+import { QQMusicProvider } from '../providers/qqmusic/qq-music-provider';
 import { LibraryPage } from './LibraryPage';
 
 const capabilities = {
@@ -93,9 +98,25 @@ function renderLibrary(overrides: Partial<ComponentProps<typeof LibraryPage>> = 
   return { ...render(<LibraryPage {...props} />), props };
 }
 
+function readyPlaylists(data: AccountPlaylistSummary[] = []) {
+  return {
+    status: 'ready' as const,
+    data,
+    nextCursor: null,
+    total: data.length,
+    fetchedAtMs: 1_800_000_000_000,
+    authRevision: 3,
+  };
+}
+
+function authenticatePlaylistWrites() {
+  useAccountStore.setState({ snapshot: authenticatedSnapshot() });
+}
+
 describe('LibraryPage account resources', () => {
   beforeEach(async () => {
     await i18n.changeLanguage('en-US');
+    resetAccountRuntimeForTest();
     usePlayerStore.setState(initialPlayerState);
   });
 
@@ -232,5 +253,61 @@ describe('LibraryPage account resources', () => {
 
     expect(screen.getByText('Favorite Songs')).toBeVisible();
     expect(screen.queryByText('Saved playlist')).not.toBeInTheDocument();
+  });
+
+  it('creates one playlist with the trimmed title and closes the form', async () => {
+    const summary = { ...playlistSummary(), title: 'Roadtrip' };
+    const createPlaylist = vi.fn(
+      async (request: CreatePlaylistRequest): Promise<PlaylistMutationResult> => ({
+        clientOperationId: request.clientOperationId,
+        status: 'applied',
+        playlist: summary,
+        errorCode: null,
+        authRevision: 3,
+      }),
+    );
+    const provider = Object.assign(new QQMusicProvider(), { createPlaylist });
+    authenticatePlaylistWrites();
+
+    render(
+      <ProviderContext.Provider value={provider}>
+        <LibraryPage
+          view="playlists"
+          snapshot={authenticatedSnapshot()}
+          favorites={{ status: 'idle' }}
+          playlists={readyPlaylists()}
+          recent={{ status: 'idle' }}
+          onNavigate={vi.fn()}
+          onSignIn={vi.fn()}
+          onRetry={vi.fn()}
+          onLoadMore={vi.fn()}
+        />
+      </ProviderContext.Provider>,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'New playlist' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Playlist name' }), {
+      target: { value: '  Roadtrip  ' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Create playlist' }));
+
+    await waitFor(() => expect(createPlaylist).toHaveBeenCalledOnce());
+    expect(createPlaylist.mock.calls[0]![0]).toMatchObject({ title: 'Roadtrip' });
+    await waitFor(() =>
+      expect(screen.queryByRole('textbox', { name: 'Playlist name' })).not.toBeInTheDocument(),
+    );
+  });
+
+  it('hides the new-playlist control when the account cannot write playlists', () => {
+    renderLibrary({
+      view: 'playlists',
+      snapshot: {
+        ...authenticatedSnapshot(),
+        capabilities: { ...capabilities, playlistWrite: false },
+      },
+      playlists: readyPlaylists(),
+    });
+
+    expect(screen.queryByRole('button', { name: 'New playlist' })).not.toBeInTheDocument();
   });
 });
